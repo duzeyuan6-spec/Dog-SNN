@@ -1,0 +1,49 @@
+{
+  "camera": {
+    "serial": "CPC936300038",
+    "width": 640,
+    "height": 480,
+    "fps": 15,
+    "frame_timeout": 1.0,
+    "max_pair_skew_ms": 30
+  },
+  "vision": {
+    "model": "yolo26n.pt",
+    "imgsz": 416,
+    "confidence": 0.35,
+    "threads": 4,
+    "acquire_seconds": 0.6,
+    "acquire_frames": 3,
+    "acquire_max_distance": 5.0,
+    "acquire_center_fraction": 0.25,
+    "min_depth_pixels": 30,
+    "min_depth_fraction": 0.15
+  },
+  "control": {
+    "target_distance": 3.5,
+    "distance_deadband": 0.15,
+    "min_distance": 0.85,
+    "max_distance": 5.5,
+    "kp_distance": 0.55,
+    "kp_yaw": 1.4,
+    "yaw_deadband": 0.06,
+    "turn_in_place_angle": 0.5,
+    "max_vx": 0.3,
+    "max_yaw": 0.5,
+    "acceleration": 0.25,
+    "deceleration": 0.8,
+    "yaw_acceleration": 1.5
+  },
+  "robot": {
+    "sdk_path": "/home/nav/Loco_manip_data/PIPER_VR/genisom_l1_sdk_old/lib/zsl-1/x86_64",
+    "local_ip": "192.168.168.66",
+    "dog_ip": "192.168.168.168",
+    "port": 43988,
+    "rate_hz": 50,
+    "connect_timeout": 8.0,
+    "observation_timeout": 0.45,
+    "auto_stand": true,
+    "stand_delay": 10.0,
+    "lie_down_delay": 3.0
+  }
+}

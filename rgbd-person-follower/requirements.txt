@@ -1,0 +1,5 @@
+ultralytics==8.4.131
+lap==0.5.13
+ultralytics-thop==2.2.2
+polars==2.0.0
+polars-runtime-32==2.0.0
