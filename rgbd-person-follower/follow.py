@@ -11,7 +11,6 @@ import multiprocessing as mp
 import os
 from pathlib import Path
 import queue
-import signal
 import time
 
 os.environ.setdefault("YOLO_AUTOINSTALL", "false")
@@ -102,7 +101,7 @@ def main():
                 "stops" if args.dry_run else "stops and lies down")
     from camera import OrbbecCamera
     from recording import RGBDRecorder, TerminalKeys
-    from robot import robot_worker
+    from robot import install_stop_signals, robot_worker
     from vision import PersonTracker
     import cv2
     import numpy as np
@@ -118,8 +117,7 @@ def main():
     stop = ctx.Event()
     observations, statuses = ctx.Queue(maxsize=1), ctx.Queue(maxsize=4)
     worker = ctx.Process(target=robot_worker, args=(config, observations, stop, statuses, args.dry_run), name="follow-control")
-    for signum in (signal.SIGINT, signal.SIGTERM):
-        signal.signal(signum, lambda *_: stop.set())
+    stop_requested = install_stop_signals(stop)
     keys = TerminalKeys()
     recorder = RGBDRecorder(output / "recordings", fps=config["camera"]["fps"], camera_serial=config["camera"]["serial"])
     camera = OrbbecCamera(config, frame_sink=recorder.submit)
@@ -142,7 +140,7 @@ def main():
         ready_deadline = time.monotonic() + config["robot"]["connect_timeout"] + 3
         if not args.dry_run and config["robot"]["auto_stand"]:
             ready_deadline += config["robot"]["stand_delay"] + config["robot"]["lie_down_delay"] + 3
-        while not stop.is_set():
+        while not stop_requested():
             now = time.monotonic()
             if args.seconds and now - started >= args.seconds:
                 break

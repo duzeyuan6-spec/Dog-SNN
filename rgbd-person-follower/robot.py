@@ -16,6 +16,26 @@ import time
 from control import FollowController
 
 
+def install_stop_signals(stop_event):
+    received = False
+
+    def handler(*_):
+        nonlocal received
+        # Signal handlers can interrupt Event while its non-reentrant lock is held.
+        received = True
+
+    if threading.current_thread() is threading.main_thread():
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            signal.signal(signum, handler)
+
+    def requested():
+        if received:
+            stop_event.set()
+        return stop_event.is_set()
+
+    return requested
+
+
 def robot_worker(config, observations, stop_event, status_queue, dry_run=False):
     """Keep zero speed unless a fresh, valid observation exists."""
     options = config["robot"]
@@ -43,10 +63,8 @@ def robot_worker(config, observations, stop_event, status_queue, dry_run=False):
     motion_deadline = None
     lie_down_sent = False
 
-    # Ctrl+C reaches both processes; repeated signals must not interrupt cleanup.
-    if threading.current_thread() is threading.main_thread():
-        for signum in (signal.SIGINT, signal.SIGTERM):
-            signal.signal(signum, lambda *_: stop_event.set())
+    # Propagate signals outside handlers; repeated signals never interrupt cleanup.
+    stop_requested = install_stop_signals(stop_event)
 
     def publish(force=False):
         nonlocal last_status, last_state
@@ -121,7 +139,7 @@ def robot_worker(config, observations, stop_event, status_queue, dry_run=False):
         time.sleep(float(options.get("lie_down_delay", 3.0)))
 
     try:
-        if stop_event.is_set() or os.getppid() != parent_pid:
+        if stop_requested() or os.getppid() != parent_pid:
             return
         publish(True)
         if not dry_run:
@@ -154,7 +172,7 @@ def robot_worker(config, observations, stop_event, status_queue, dry_run=False):
                     app.move(0.0, 0.0, 0.0)
                 except Exception:
                     pass
-                if stop_event.is_set() or os.getppid() != parent_pid:
+                if stop_requested() or os.getppid() != parent_pid:
                     return
                 if time.monotonic() >= deadline:
                     raise TimeoutError(f"No dog SDK feedback from {dog_ip} within 8 s")
@@ -168,7 +186,7 @@ def robot_worker(config, observations, stop_event, status_queue, dry_run=False):
             # Start from a known low posture before every stand, even if already up.
             if initial_mode not in (0, 10, 51):
                 lower()
-            if stop_event.is_set() or os.getppid() != parent_pid:
+            if stop_requested() or os.getppid() != parent_pid:
                 return
             lie_down_sent = False
             code = app.standUp()
@@ -180,7 +198,7 @@ def robot_worker(config, observations, stop_event, status_queue, dry_run=False):
             state = "standing"
         publish(True)
         previous_tick = time.monotonic()
-        while not stop_event.is_set() and os.getppid() == parent_pid:
+        while not stop_requested() and os.getppid() == parent_pid:
             tick = time.monotonic()
             dt = max(0.001, min(tick - previous_tick, 0.1))
             previous_tick = tick

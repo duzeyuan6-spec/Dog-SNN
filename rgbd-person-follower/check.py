@@ -352,17 +352,43 @@ def check_battery():
         assert samples == [0, 51], samples  # Start before standUp; finish after shutdown lieDown.
 
 
+def check_signal_reentrancy():
+    ctx = mp.get_context("fork")
+
+    def interrupted_with_lock_held():
+        stop = ctx.Event()
+        requested = robot.install_stop_signals(stop)
+        with stop._cond:  # Deterministically interrupt Event's non-reentrant lock.
+            for signum in (signal.SIGINT, signal.SIGINT, signal.SIGTERM):
+                os.kill(os.getpid(), signum)
+        assert requested() and stop.is_set()
+
+    worker = ctx.Process(target=interrupted_with_lock_held)
+    worker.start()
+    try:
+        worker.join(timeout=2)
+        assert not worker.is_alive(), "Signal handler deadlocked on the stop Event lock"
+        assert worker.exitcode == 0, worker.exitcode
+    finally:
+        if worker.is_alive():
+            worker.kill()
+            worker.join(timeout=1)
+
+
 def check_shutdown_signals():
     ctx = mp.get_context("fork")
-    for signals in ((signal.SIGINT,), (signal.SIGINT, signal.SIGINT, signal.SIGTERM)):
+    for mode, stop_state, signals in ((1, "lying_down", (signal.SIGINT,)),
+                                     (1, "lying_down", (signal.SIGINT, signal.SIGINT, signal.SIGTERM)),
+                                     (0, "standing", (signal.SIGINT,)),
+                                     (0, "standing", (signal.SIGINT, signal.SIGINT, signal.SIGTERM))):
         cfg = copy.deepcopy(CONFIG)
         cfg["_parent_pid"] = os.getpid()
         cfg["robot"].update(local_ip="127.0.0.1", port=0, sdk_path=str(ROOT),
-                            stand_delay=.08, lie_down_delay=.15)
+                            stand_delay=.5, lie_down_delay=.15)
         stop, statuses, calls = ctx.Event(), ctx.Queue(), ctx.Queue()
 
         def run_fake():
-            sdk = FakeSDK(1, call_queue=calls)
+            sdk = FakeSDK(mode, call_queue=calls)
             with mock.patch.object(robot.importlib, "import_module", return_value=SimpleNamespace(HighLevel=lambda: sdk)):
                 robot.robot_worker(cfg, queue.Queue(), stop, statuses, False)
             calls.put(("finished", time.monotonic()))
@@ -374,11 +400,11 @@ def check_shutdown_signals():
             while time.monotonic() < deadline:
                 packet = statuses.get(timeout=1)
                 assert packet["state"] != "error", packet
-                if packet["state"] == "lying_down":
-                    assert packet["lie_down_sent"] and not packet["ready"], packet
+                if packet["state"] == stop_state:
+                    assert packet["lie_down_sent"] == (stop_state == "lying_down") and not packet["ready"], packet
                     break
             else:
-                raise AssertionError("Fake worker never began startup lieDown")
+                raise AssertionError(f"Fake worker never reached {stop_state}")
             for signum in signals:
                 os.kill(worker.pid, signum)
                 time.sleep(.02)
@@ -390,7 +416,7 @@ def check_shutdown_signals():
                     recorded.append(calls.get(timeout=.05))
                 except queue.Empty:
                     break
-            assert not any(c[0] == "stand" for c in recorded), recorded
+            assert len([c for c in recorded if c[0] == "stand"]) == (1 if stop_state == "standing" else 0), recorded
             lies = [c for c in recorded if c[0] == "lie"]
             assert len(lies) == 1 and lies[0][2] == 0, recorded
             assert not any(c[0] == "move" and c[1] > lies[0][1] for c in recorded), recorded
@@ -410,7 +436,8 @@ if __name__ == "__main__":
     check_worker()
     check_postures()
     check_battery()
+    check_signal_reentrancy()
     check_shutdown_signals()
     check_motion_window()
     check_config()
-    print("PASS: controller, target lock, depth, freshness, watchdog, posture order, shutdown hold/signals, battery, config")
+    print("PASS: controller, target lock, depth, freshness, watchdog, posture order, shutdown hold/signals/reentrancy, battery, config")
