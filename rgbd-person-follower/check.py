@@ -112,6 +112,7 @@ def check_vision_and_camera():
 
 def check_worker():
     cfg = copy.deepcopy(CONFIG)
+    cfg["robot"]["record_battery"] = True
     cfg["_parent_pid"] = os.getppid()
     observations, statuses, stop = queue.Queue(), queue.Queue(), threading.Event()
     sequence, captured_at, packets = 0, 0.0, []
@@ -169,6 +170,7 @@ def check_config():
         for section, key, value in (("vision", "confidence", 1), ("control", "max_vx", 3.01),
                                    ("control", "max_yaw", 3.01),
                                    ("robot", "rate_hz", float("nan")), ("robot", "auto_stand", "yes"),
+                                   *(("robot", "record_battery", value) for value in ("false", 0, 1, None)),
                                    ("robot", "lie_down_delay", 2.9),
                                    ("camera", "serial", ""), ("vision", "min_depth_fraction", 0)):
             cfg = copy.deepcopy(CONFIG)
@@ -179,6 +181,13 @@ def check_config():
         cfg["control"].update(max_vx=3.0, max_yaw=3.0)
         path.write_text(json.dumps(cfg))
         assert load_config(path)["control"]["max_vx"] == 3.0
+        for enabled in (True, False, None):
+            cfg = copy.deepcopy(CONFIG)
+            cfg["robot"].pop("record_battery", None)
+            if enabled is not None:
+                cfg["robot"]["record_battery"] = enabled
+            path.write_text(json.dumps(cfg))
+            assert load_config(path)["robot"].get("record_battery", True) is (True if enabled is None else enabled)
 
 
 def check_motion_window():
@@ -251,7 +260,7 @@ def check_postures():
         cfg = copy.deepcopy(CONFIG)
         cfg["_parent_pid"] = os.getppid()
         cfg["robot"].update(local_ip="127.0.0.1", port=0, sdk_path=str(ROOT),
-                            stand_delay=.08, lie_down_delay=.06)
+                            stand_delay=.08, lie_down_delay=.06, record_battery=True)
         sdk = FakeSDK(mode, rejects, stand_result)
         stop, statuses = threading.Event(), queue.Queue()
         with mock.patch.object(robot.importlib, "import_module", return_value=SimpleNamespace(HighLevel=lambda: sdk)):
@@ -309,12 +318,14 @@ def check_postures():
 
 
 def check_battery():
-    for initial, final in ((80, 77), (80, 80), (0, 0), (80, 81), (-1, 77), (80, 101), (80, None)):
+    cases = [(True, initial, final) for initial, final in
+             ((80, 77), (80, 80), (0, 0), (80, 81), (-1, 77), (80, 101), (80, None))]
+    for enabled, initial, final in cases + [(False, 80, 77)]:
         cfg = copy.deepcopy(CONFIG)
         cfg["_parent_pid"] = os.getppid()
         cfg["robot"].update(local_ip="127.0.0.1", port=0, sdk_path=str(ROOT),
-                            stand_delay=.01, lie_down_delay=.01)
-        sdk, samples = FakeSDK(0), []
+                            stand_delay=.01, lie_down_delay=.01, record_battery=enabled)
+        sdk, samples, packets = FakeSDK(0), [], []
         readings = iter((initial, final))
 
         def read():
@@ -331,8 +342,11 @@ def check_battery():
                 deadline = time.monotonic() + 2
                 while time.monotonic() < deadline:
                     packet = statuses.get(timeout=1)
+                    packets.append(packet)
                     assert packet["state"] != "error", packet
                     if packet["ready"]:
+                        if not enabled:
+                            time.sleep(1.1)  # Cover the periodic read as well as startup and shutdown.
                         break
                 else:
                     raise AssertionError("Fake dog never became ready")
@@ -342,10 +356,15 @@ def check_battery():
             assert not worker.is_alive()
         while not statuses.empty():
             packet = statuses.get_nowait()
+            packets.append(packet)
+        assert packet["state"] == "stopped" and packet["lie_down_sent"], packet
+        if not enabled:
+            assert samples == [], samples
+            assert all(not any(key.startswith("battery") for key in item) for item in packets), packets
+            continue
         expected_start = initial if 0 <= initial <= 100 else None
         expected_end = final if final is not None and 0 <= final <= 100 else None
         expected_used = expected_start - expected_end if expected_start is not None and expected_end is not None else None
-        assert packet["state"] == "stopped" and packet["lie_down_sent"], packet
         assert packet["battery_start_percent"] == expected_start, packet
         assert packet["battery_end_percent"] == expected_end, packet
         assert packet["battery_used_percent_points"] == expected_used, packet

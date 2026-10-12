@@ -35,6 +35,7 @@
     "yaw_acceleration": 1.5
   },
   "robot": {
+    "record_battery": true,
     "sdk_path": "/home/nav/Loco_manip_data/PIPER_VR/genisom_l1_sdk_old/lib/zsl-1/x86_64",
     "local_ip": "192.168.168.66",
     "dog_ip": "192.168.168.168",

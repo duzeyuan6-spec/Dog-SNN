@@ -39,6 +39,7 @@ def install_stop_signals(stop_event):
 def robot_worker(config, observations, stop_event, status_queue, dry_run=False):
     """Keep zero speed unless a fresh, valid observation exists."""
     options = config["robot"]
+    record_battery = options.get("record_battery", True)
     parent_pid = int(config.get("_parent_pid", os.getppid()))
     period = 1.0 / float(options.get("rate_hz", 50))
     max_age = float(options.get("observation_timeout", 0.45))
@@ -71,12 +72,12 @@ def robot_worker(config, observations, stop_event, status_queue, dry_run=False):
         now = time.monotonic()
         if not force and state == last_state and now - last_status < 1.0:
             return
-        packet = dict(state=state, vx=vx, yaw=yaw, battery=battery,
-                      battery_start_percent=battery_start, battery_end_percent=battery_end,
-                      battery_used_percent_points=(battery_start - battery_end
-                                                   if battery_start is not None and battery_end is not None else None),
-                      observation_age=observation_age, ready=ready,
+        packet = dict(state=state, vx=vx, yaw=yaw, observation_age=observation_age, ready=ready,
                       error=error, dry_run=bool(dry_run), lie_down_sent=lie_down_sent)
+        if record_battery:
+            packet.update(battery=battery, battery_start_percent=battery_start, battery_end_percent=battery_end,
+                          battery_used_percent_points=(battery_start - battery_end
+                                                       if battery_start is not None and battery_end is not None else None))
         try:
             status_queue.put_nowait(packet)
         except queue.Full:
@@ -92,6 +93,8 @@ def robot_worker(config, observations, stop_event, status_queue, dry_run=False):
 
     def read_battery():
         nonlocal battery, last_battery
+        if not record_battery:
+            return None
         raw = int(app.getBatteryPower())
         battery = raw if 0 <= raw <= 100 else None
         last_battery = time.monotonic()

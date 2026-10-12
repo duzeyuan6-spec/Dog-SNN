@@ -29,6 +29,8 @@ def load_config(path):
                 if not math.isfinite(value) or value <= 0:
                     raise ValueError(f"{section}.{key} must be finite and positive")
     c, r, v = config["control"], config["robot"], config["vision"]
+    if not isinstance(r.setdefault("record_battery", True), bool):
+        raise ValueError("robot.record_battery must be true or false")
     if not 0 < c["min_distance"] < c["target_distance"] < c["max_distance"] <= 6:
         raise ValueError("Expected min_distance < target_distance < max_distance <= 6m")
     if c["max_vx"] > 3.0 or c["max_yaw"] > 3.0:
@@ -82,6 +84,7 @@ def main():
     if not math.isfinite(args.motion_seconds) or args.motion_seconds < 0:
         parser.error("motion-seconds must be finite and nonnegative")
     config = load_config(args.config)
+    record_battery = config["robot"]["record_battery"]
     lock = (ROOT / ".run.lock").open("w")
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -121,7 +124,9 @@ def main():
     keys = TerminalKeys()
     recorder = RGBDRecorder(output / "recordings", fps=config["camera"]["fps"], camera_serial=config["camera"]["serial"])
     camera = OrbbecCamera(config, frame_sink=recorder.submit)
-    robot_status = {"state": "starting", "vx": 0.0, "yaw": 0.0, "battery": None}
+    robot_status = {"state": "starting", "vx": 0.0, "yaw": 0.0}
+    if record_battery:
+        robot_status["battery"] = None
     frames = visible = 0
     latencies = []
     history = deque(maxlen=500)
@@ -147,7 +152,7 @@ def main():
             try:
                 while True:
                     robot_status = statuses.get_nowait()
-                    if not battery_start_logged and robot_status.get("battery_start_percent") is not None:
+                    if record_battery and not battery_start_logged and robot_status.get("battery_start_percent") is not None:
                         logger.info("启动电量：%d%%", robot_status["battery_start_percent"])
                         battery_start_logged = True
                     if robot_status.get("state") in ("error", "disconnected"):
@@ -210,9 +215,10 @@ def main():
                     temporary = output / "latest.tmp"
                     temporary.write_bytes(encoded.tobytes())
                     temporary.replace(output / "latest.jpg")
-                logger.info("%s id=%s d=%.2fm angle=%.2f vx=%.2f yaw=%.2f battery=%s age=%.0fms",
+                logger.info("%s id=%s d=%.2fm angle=%.2f vx=%.2f yaw=%.2f%s age=%.0fms",
                             observation["reason"], observation["track_id"], observation["distance"], observation["bearing"],
-                            robot_status.get("vx", 0), robot_status.get("yaw", 0), robot_status.get("battery"), age * 1000)
+                            robot_status.get("vx", 0), robot_status.get("yaw", 0),
+                            f" battery={robot_status.get('battery')}" if record_battery else "", age * 1000)
     except Exception:
         logger.exception("Follower stopped")
         exit_code = 1
@@ -263,19 +269,20 @@ def main():
                   "latency_p95_ms": round(float(np.percentile(latencies, 95)) * 1000, 1) if latencies else None,
                   "target_id": tracker.target_id, "stopped": True,
                   "lie_down_sent": robot_status.get("lie_down_sent", False)}
-        report.update({key: robot_status.get(key) for key in
-                       ("battery_start_percent", "battery_end_percent", "battery_used_percent_points")})
-        battery_start, battery_end, battery_used = (report[key] for key in
-                                                  ("battery_start_percent", "battery_end_percent", "battery_used_percent_points"))
-        if battery_used is None:
-            logger.info("本次耗电：无法统计（启动电量=%s，结束电量=%s）",
-                        f"{battery_start}%" if battery_start is not None else "未知",
-                        f"{battery_end}%" if battery_end is not None else "未知")
-        elif battery_used >= 0:
-            logger.info("本次耗电：%d 个百分点（启动 %d%% → 结束 %d%%）", battery_used, battery_start, battery_end)
-        else:
-            logger.info("本次电量上升：%d 个百分点（启动 %d%% → 结束 %d%%，可能充电或电量估计波动）",
-                        -battery_used, battery_start, battery_end)
+        if record_battery:
+            report.update({key: robot_status.get(key) for key in
+                           ("battery_start_percent", "battery_end_percent", "battery_used_percent_points")})
+            battery_start, battery_end, battery_used = (report[key] for key in
+                                                      ("battery_start_percent", "battery_end_percent", "battery_used_percent_points"))
+            if battery_used is None:
+                logger.info("本次耗电：无法统计（启动电量=%s，结束电量=%s）",
+                            f"{battery_start}%" if battery_start is not None else "未知",
+                            f"{battery_end}%" if battery_end is not None else "未知")
+            elif battery_used >= 0:
+                logger.info("本次耗电：%d 个百分点（启动 %d%% → 结束 %d%%）", battery_used, battery_start, battery_end)
+            else:
+                logger.info("本次电量上升：%d 个百分点（启动 %d%% → 结束 %d%%，可能充电或电量估计波动）",
+                            -battery_used, battery_start, battery_end)
         save_json(output / "last_run.json", report)
         save_json(output / "last_trace.json", list(history))
         save_json(output / "status.json", {"state": "stopped", "vx": 0, "yaw": 0, "last_run": report})
