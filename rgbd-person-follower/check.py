@@ -159,6 +159,8 @@ def check_worker():
             worker.join(timeout=1)
         assert not worker.is_alive()
         assert all(packet["dry_run"] for packet in packets)
+        assert all(packet["battery_start_percent"] is None and packet["battery_end_percent"] is None
+                   and packet["battery_used_percent_points"] is None for packet in packets)
 
 
 def check_config():
@@ -301,6 +303,50 @@ def check_postures():
         assert all(call[2:] == (0.0, 0.0) for call in sdk.calls if call[0] == "move")
 
 
+def check_battery():
+    for initial, final in ((80, 77), (80, 80), (0, 0), (80, 81), (-1, 77), (80, 101), (80, None)):
+        cfg = copy.deepcopy(CONFIG)
+        cfg["_parent_pid"] = os.getppid()
+        cfg["robot"].update(local_ip="127.0.0.1", port=0, sdk_path=str(ROOT),
+                            stand_delay=.01, lie_down_delay=.01)
+        sdk, samples = FakeSDK(0), []
+        readings = iter((initial, final))
+
+        def read():
+            samples.append(sdk.mode)
+            return next(readings)
+
+        sdk.getBatteryPower = read
+        stop, statuses = threading.Event(), queue.Queue()
+        with mock.patch.object(robot.importlib, "import_module", return_value=SimpleNamespace(HighLevel=lambda: sdk)):
+            worker = threading.Thread(target=robot.robot_worker,
+                                      args=(cfg, queue.Queue(), stop, statuses, False), daemon=True)
+            worker.start()
+            try:
+                deadline = time.monotonic() + 2
+                while time.monotonic() < deadline:
+                    packet = statuses.get(timeout=1)
+                    assert packet["state"] != "error", packet
+                    if packet["ready"]:
+                        break
+                else:
+                    raise AssertionError("Fake dog never became ready")
+            finally:
+                stop.set()
+                worker.join(timeout=2)
+            assert not worker.is_alive()
+        while not statuses.empty():
+            packet = statuses.get_nowait()
+        expected_start = initial if 0 <= initial <= 100 else None
+        expected_end = final if final is not None and 0 <= final <= 100 else None
+        expected_used = expected_start - expected_end if expected_start is not None and expected_end is not None else None
+        assert packet["state"] == "stopped" and packet["lie_down_sent"], packet
+        assert packet["battery_start_percent"] == expected_start, packet
+        assert packet["battery_end_percent"] == expected_end, packet
+        assert packet["battery_used_percent_points"] == expected_used, packet
+        assert samples == [0, 51], samples  # Start before standUp; finish after shutdown lieDown.
+
+
 def check_shutdown_signals():
     ctx = mp.get_context("fork")
     for signals in ((signal.SIGINT,), (signal.SIGINT, signal.SIGINT, signal.SIGTERM)):
@@ -358,6 +404,7 @@ if __name__ == "__main__":
     check_vision_and_camera()
     check_worker()
     check_postures()
+    check_battery()
     check_shutdown_signals()
     check_motion_window()
     check_config()

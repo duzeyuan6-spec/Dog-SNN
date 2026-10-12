@@ -131,6 +131,7 @@ def main():
     last_write = 0.0
     last_sequence = -1
     exit_code = 0
+    battery_start_logged = False
     try:
         logger.info("Keys: 1 starts RGB-D recording, a stops and saves (no Enter)" if keys.open()
                     else "Noninteractive input: recording hotkeys disabled; run in a terminal to record")
@@ -148,6 +149,9 @@ def main():
             try:
                 while True:
                     robot_status = statuses.get_nowait()
+                    if not battery_start_logged and robot_status.get("battery_start_percent") is not None:
+                        logger.info("启动电量：%d%%", robot_status["battery_start_percent"])
+                        battery_start_logged = True
                     if robot_status.get("state") in ("error", "disconnected"):
                         raise RuntimeError(robot_status["error"])
             except queue.Empty:
@@ -259,6 +263,19 @@ def main():
                   "latency_p95_ms": round(float(np.percentile(latencies, 95)) * 1000, 1) if latencies else None,
                   "target_id": tracker.target_id, "stopped": True,
                   "lie_down_sent": robot_status.get("lie_down_sent", False)}
+        report.update({key: robot_status.get(key) for key in
+                       ("battery_start_percent", "battery_end_percent", "battery_used_percent_points")})
+        battery_start, battery_end, battery_used = (report[key] for key in
+                                                  ("battery_start_percent", "battery_end_percent", "battery_used_percent_points"))
+        if battery_used is None:
+            logger.info("本次耗电：无法统计（启动电量=%s，结束电量=%s）",
+                        f"{battery_start}%" if battery_start is not None else "未知",
+                        f"{battery_end}%" if battery_end is not None else "未知")
+        elif battery_used >= 0:
+            logger.info("本次耗电：%d 个百分点（启动 %d%% → 结束 %d%%）", battery_used, battery_start, battery_end)
+        else:
+            logger.info("本次电量上升：%d 个百分点（启动 %d%% → 结束 %d%%，可能充电或电量估计波动）",
+                        -battery_used, battery_start, battery_end)
         save_json(output / "last_run.json", report)
         save_json(output / "last_trace.json", list(history))
         save_json(output / "status.json", {"state": "stopped", "vx": 0, "yaw": 0, "last_run": report})

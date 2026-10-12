@@ -26,6 +26,7 @@ def robot_worker(config, observations, stop_event, status_queue, dry_run=False):
     app = None
     ready = False
     battery = None
+    battery_start = battery_end = None
     state = "initializing"
     error = None
     latest = None
@@ -53,6 +54,9 @@ def robot_worker(config, observations, stop_event, status_queue, dry_run=False):
         if not force and state == last_state and now - last_status < 1.0:
             return
         packet = dict(state=state, vx=vx, yaw=yaw, battery=battery,
+                      battery_start_percent=battery_start, battery_end_percent=battery_end,
+                      battery_used_percent_points=(battery_start - battery_end
+                                                   if battery_start is not None and battery_end is not None else None),
                       observation_age=observation_age, ready=ready,
                       error=error, dry_run=bool(dry_run), lie_down_sent=lie_down_sent)
         try:
@@ -67,6 +71,13 @@ def robot_worker(config, observations, stop_event, status_queue, dry_run=False):
             except queue.Full:
                 pass
         last_status, last_state = now, state
+
+    def read_battery():
+        nonlocal battery, last_battery
+        raw = int(app.getBatteryPower())
+        battery = raw if 0 <= raw <= 100 else None
+        last_battery = time.monotonic()
+        return battery
 
     def send(forward, turn):
         if not math.isfinite(forward) or not math.isfinite(turn):
@@ -150,6 +161,7 @@ def robot_worker(config, observations, stop_event, status_queue, dry_run=False):
                 stop_event.wait(0.05)
             initial_mode = int(app.getCurrentCtrlmode())
             send(0.0, 0.0)
+            battery_start = read_battery()
         ready = standing
         state = "waiting_target"
         if not standing:
@@ -248,9 +260,7 @@ def robot_worker(config, observations, stop_event, status_queue, dry_run=False):
             if not (stand_requested and state == "standing"):
                 send(vx, yaw)
             if app is not None and connected and tick - last_battery >= 1.0:
-                raw_battery = int(app.getBatteryPower())
-                battery = raw_battery if 0 <= raw_battery <= 100 else None
-                last_battery = tick
+                read_battery()
             publish()
             stop_event.wait(max(0.0, period - (time.monotonic() - tick)))
     except KeyboardInterrupt:
@@ -273,6 +283,11 @@ def robot_worker(config, observations, stop_event, status_queue, dry_run=False):
                     lower()
             except Exception as exc:
                 failed, error = True, f"Shutdown failed: {type(exc).__name__}: {exc}"
+            try:
+                if app.checkConnect():
+                    battery_end = read_battery()
+            except Exception:
+                battery_end = None  # A missing final reading must not masquerade as zero consumption.
             app = None  # HighLevel destructor joins its native sending thread.
         state = "error" if failed else "stopped"
         publish(True)
