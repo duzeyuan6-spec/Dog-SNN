@@ -33,9 +33,14 @@ def raises(kind, action):
     raise AssertionError(f"Expected {kind.__name__}")
 
 
-def saved(path, expected):
+def feed(recorder, keys, item):
+    recorder.handle(keys, item)
+    recorder.submit(item)
+
+
+def saved(path, expected, status="complete"):
     metadata = json.loads((path / "metadata.json").read_text(encoding="utf-8"))
-    assert metadata["status"] == "complete", metadata
+    assert metadata["status"] == status, metadata
     assert metadata["frames_written"] == len(expected), metadata
     assert metadata["depth_unit"] == "m" and metadata["camera_serial"] == "test-camera", metadata
     with (path / "timestamps.csv").open(newline="", encoding="utf-8") as stream:
@@ -66,11 +71,11 @@ def check_clips(root):
     recorder = RGBDRecorder(root, fps=15, camera_serial="test-camera")
     first, second, third = frame(0), frame(1), frame(2)
     try:
-        recorder.handle("11", first)
+        feed(recorder, "11", first)
         assert recorder.active
         first_path = Path(recorder.path)
-        recorder.handle("", second)
-        recorder.handle("aa", third)
+        feed(recorder, "", second)
+        feed(recorder, "aa", third)
         assert not recorder.active
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
@@ -83,7 +88,7 @@ def check_clips(root):
         # Reap the completed writer before opening another clip.
         recorder.handle("", third)
         saved(first_path, [first, second])
-        recorder.handle("1", third)
+        feed(recorder, "1", third)
         second_path = Path(recorder.path)
         assert second_path != first_path
         recorder.close()  # Ctrl+C/normal exit uses this same cleanup.
@@ -106,20 +111,20 @@ def check_backpressure(root):
     timer.start()
     try:
         with mock.patch("recording.np.save", side_effect=slow_save):
-            recorder.handle("1", frame(0))
+            feed(recorder, "1", frame(0))
             assert entered.wait(2), "Writer did not receive the first frame"
             started = time.monotonic()
-            recorder.handle("", frame(1))
-            recorder.handle("", frame(2))
-            recorder.handle("", frame(3))
-            recorder.handle("a", frame(4))
+            feed(recorder, "", frame(1))
+            feed(recorder, "", frame(2))
+            feed(recorder, "", frame(3))
+            feed(recorder, "a", frame(4))
             assert time.monotonic() - started < .3, "Recording blocked the follower"
-            assert recorder.dropped_pairs == 2
+            assert recorder.dropped_pairs == 1 and not recorder.active
             path = Path(recorder.path)
             release.set()
-            recorder.close()
-        metadata = saved(path, [frame(0), frame(1)])
-        assert metadata["dropped_pairs"] == 2
+            assert "overflow" in str(raises(RuntimeError, recorder.close))
+        metadata = saved(path, [frame(0), frame(1)], status="error")
+        assert metadata["dropped_pairs"] == 1 and not metadata["fps_verified"]
     finally:
         release.set()
         timer.cancel()
@@ -129,12 +134,61 @@ def check_backpressure(root):
 def check_errors(root):
     recorder = RGBDRecorder(root, fps=15, camera_serial="test-camera")
     with mock.patch("recording.np.save", side_effect=OSError("synthetic disk failure")):
-        error = raises(RuntimeError, lambda: (recorder.handle("1", frame(0)), recorder.close()))
+        error = raises(RuntimeError, lambda: (feed(recorder, "1", frame(0)), recorder.close()))
         assert "synthetic disk failure" in str(error), error
     failed = SimpleNamespace(isOpened=lambda: False, release=lambda: None)
     recorder = RGBDRecorder(root, fps=15, camera_serial="test-camera")
     with mock.patch("recording.cv2.VideoWriter", return_value=failed):
-        raises(RuntimeError, lambda: (recorder.handle("1", frame(0)), recorder.close()))
+        raises(RuntimeError, lambda: (feed(recorder, "1", frame(0)), recorder.close()))
+
+
+def check_capture_independence(root):
+    recorder = RGBDRecorder(root, fps=30, camera_serial="test-camera")
+    sources, done = [], threading.Event()
+    recorder.handle("1", frame(0))
+    assert recorder.frames_received == 0, "Keyboard/inference loop must not enqueue video frames"
+
+    def capture():
+        try:
+            for index in range(60):
+                item = frame(index % 3)
+                item.sequence = index + 1
+                item.captured_at = 100 + index / 30
+                item.device_timestamp = 200 + index / 30
+                sources.append(item)
+                recorder.submit(item)
+                time.sleep(1 / 30)
+        finally:
+            done.set()
+
+    producer = threading.Thread(target=capture, daemon=True)
+    producer.start()
+    try:
+        while not done.wait(.2):  # Only 5 inference/key polls per second, versus 30 captured pairs.
+            recorder.handle("", frame(0))
+        producer.join(timeout=1)
+        recorder.close()
+        metadata = saved(Path(recorder.path), sources)
+        assert len(sources) == metadata["frames_written"] == 60
+        assert metadata["fps_verified"] and abs(metadata["measured_fps"] - 30) < .001, metadata
+        assert metadata["source_dropped_frames"] == metadata["dropped_pairs"] == 0
+    finally:
+        producer.join(timeout=3)
+        recorder.close()
+
+    recorder = RGBDRecorder(root, fps=30, camera_serial="test-camera")
+    first, second = frame(0), frame(1)
+    second.device_timestamp = first.device_timestamp + .1  # Two missing camera intervals.
+    feed(recorder, "1", first)
+    recorder.submit(second)
+    recorder.close()
+    metadata = saved(Path(recorder.path), [first, second])
+    assert metadata["source_dropped_frames"] == 2 and not metadata["fps_verified"], metadata
+
+    recorder = RGBDRecorder(root, fps=30, camera_serial="test-camera")
+    feed(recorder, "1", first)
+    recorder.submit(first)  # Reject a duplicate hardware timestamp rather than fabricating another frame.
+    raises(RuntimeError, recorder.close)
 
 
 def check_keys():
@@ -180,4 +234,5 @@ if __name__ == "__main__":
         check_clips(root)
         check_backpressure(root)
         check_errors(root)
+        check_capture_independence(root)
     print("Recording checks passed; no camera or robot SDK opened.")

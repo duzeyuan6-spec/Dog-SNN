@@ -21,8 +21,9 @@ class RGBDFrame:
 
 
 class OrbbecCamera:
-    def __init__(self, config):
+    def __init__(self, config, frame_sink=None):
         self.config = config.get("camera", config)
+        self.frame_sink = frame_sink
         self._condition = threading.Condition()
         self._stop = threading.Event()
         self._latest = self._error = self._thread = self._pipeline = None
@@ -63,10 +64,10 @@ class OrbbecCamera:
                               (("width", 640), ("height", 480), ("fps", 15)))
         if min(width, height, fps) <= 0:
             raise ValueError("camera width, height, and fps must be positive")
-        # ponytail: try a few advertised low-bandwidth pairs; USB3/high-res needs an explicit config.
+        # Never silently reduce the requested recording FPS or color resolution.
         pairs = [(c, d) for c in colors for d in depths
-                 if c.get_fps() == d.get_fps() <= fps
-                 and c.get_width() <= width and c.get_height() <= height
+                 if c.get_fps() == d.get_fps() == fps
+                 and c.get_width() == width and c.get_height() == height
                  and d.get_width() <= 640 and d.get_height() <= 480]
         pairs.sort(key=lambda pair: (abs(pair[0].get_fps() - fps),
                    width * height - pair[0].get_width() * pair[0].get_height(),
@@ -92,7 +93,8 @@ class OrbbecCamera:
                 except Exception:
                     pass
         if not self._started:
-            raise RuntimeError(f"No usable low-bandwidth RGB-D profiles: {errors or 'no matching pair advertised'}")
+            raise RuntimeError(f"Cannot start synchronized {width}x{height}@{fps} RGB-D: "
+                               f"{errors or 'no matching pair advertised'}")
         self._align = ob.AlignFilter(align_to_stream=ob.OBStreamType.COLOR_STREAM)
         self._thread = threading.Thread(target=self._capture, name="orbbec-latest", daemon=True)
         self._thread.start()
@@ -161,6 +163,8 @@ class OrbbecCamera:
                 with self._condition:
                     self._latest = frame
                     self._condition.notify_all()
+                if self.frame_sink is not None:
+                    self.frame_sink(frame)
         except Exception as exc:
             if not self._stop.is_set():
                 with self._condition:

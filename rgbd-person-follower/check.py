@@ -166,7 +166,8 @@ def check_worker():
 def check_config():
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "config.json"
-        for section, key, value in (("vision", "confidence", 1), ("control", "max_vx", .61),
+        for section, key, value in (("vision", "confidence", 1), ("control", "max_vx", 3.01),
+                                   ("control", "max_yaw", 3.01),
                                    ("robot", "rate_hz", float("nan")), ("robot", "auto_stand", "yes"),
                                    ("robot", "lie_down_delay", 2.9),
                                    ("camera", "serial", ""), ("vision", "min_depth_fraction", 0)):
@@ -174,6 +175,10 @@ def check_config():
             cfg[section][key] = value
             path.write_text(json.dumps(cfg))
             raises(ValueError, lambda: load_config(path))
+        cfg = copy.deepcopy(CONFIG)
+        cfg["control"].update(max_vx=3.0, max_yaw=3.0)
+        path.write_text(json.dumps(cfg))
+        assert load_config(path)["control"]["max_vx"] == 3.0
 
 
 def check_motion_window():

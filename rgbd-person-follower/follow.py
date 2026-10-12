@@ -32,8 +32,8 @@ def load_config(path):
     c, r, v = config["control"], config["robot"], config["vision"]
     if not 0 < c["min_distance"] < c["target_distance"] < c["max_distance"] <= 6:
         raise ValueError("Expected min_distance < target_distance < max_distance <= 6m")
-    if c["max_vx"] > .6 or c["max_yaw"] > 1.0:
-        raise ValueError("This walking follower supports max_vx <= .6 and max_yaw <= 1.0")
+    if c["max_vx"] > 3.0 or c["max_yaw"] > 3.0:
+        raise ValueError("SDK move limits: max_vx <= 3.0 m/s and max_yaw <= 3.0 rad/s")
     if not .2 <= r["observation_timeout"] <= 1 or not 10 <= r["rate_hz"] <= 100:
         raise ValueError("Invalid observation_timeout or rate_hz")
     if not isinstance(r["auto_stand"], bool) or not 1 <= r["port"] <= 65535:
@@ -120,9 +120,9 @@ def main():
     worker = ctx.Process(target=robot_worker, args=(config, observations, stop, statuses, args.dry_run), name="follow-control")
     for signum in (signal.SIGINT, signal.SIGTERM):
         signal.signal(signum, lambda *_: stop.set())
-    camera = OrbbecCamera(config)
     keys = TerminalKeys()
     recorder = RGBDRecorder(output / "recordings", fps=config["camera"]["fps"], camera_serial=config["camera"]["serial"])
+    camera = OrbbecCamera(config, frame_sink=recorder.submit)
     robot_status = {"state": "starting", "vx": 0.0, "yaw": 0.0, "battery": None}
     frames = visible = 0
     latencies = []
@@ -190,7 +190,9 @@ def main():
                 status = {"dry_run": args.dry_run, "observation": observation, "robot": robot_status,
                           "detections": tracker.detections,
                           "recording": {"active": recorder.active, "path": str(recorder.path) if recorder.path else None,
-                                        "frames_written": recorder.frames_written, "dropped_pairs": recorder.dropped_pairs},
+                                        "frames_written": recorder.frames_written, "dropped_pairs": recorder.dropped_pairs,
+                                        "frames_received": recorder.frames_received,
+                                        "source_dropped_frames": recorder.source_dropped_frames},
                           "fps": round(frames / max(.01, now - started), 2), "frame_age_ms": round(age * 1000, 1),
                           "time": time.strftime("%Y-%m-%d %H:%M:%S")}
                 save_json(output / "status.json", status)
