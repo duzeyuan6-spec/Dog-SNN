@@ -14,6 +14,8 @@ from types import SimpleNamespace
 from unittest import mock
 
 import numpy as np
+import torch
+from ultralytics.engine.results import Results
 
 from camera import OrbbecCamera, RGBDFrame
 from control import FollowController
@@ -58,6 +60,18 @@ def check_vision_and_camera():
     depth = np.full((480, 640), 2, np.float32)
     with mock.patch.object(vision, "YOLO"):
         tracker = vision.PersonTracker(ROOT / "yolo26n.pt", CONFIG)
+    tracker.model.add_callback.assert_called_once_with(
+        "on_predict_postprocess_end", tracker._suppress_overlaps)
+    # Regression: the real one-person duplicate had IoU 0.637 and split its ID.
+    boxes = torch.tensor([[276, 81, 336, 290, .501, 0],
+                          [277, 81, 370, 286, .381, 0],
+                          [440, 80, 520, 290, .9, 0]])
+    result = Results(color, path="synthetic.jpg", names={0: "person"}, boxes=boxes)
+    empty = Results(color, path="empty.jpg", names={0: "person"}, boxes=boxes[:0])
+    none = Results(color, path="none.jpg", names={0: "person"})
+    tracker._suppress_overlaps(SimpleNamespace(results=[result, empty, none]))
+    assert sorted(result.boxes.data.tolist()) == sorted(boxes[[0, 2]].tolist())
+    assert empty.boxes.data.shape == (0, 6) and none.boxes is None
     person = dict(track_id=7, distance=2.0, bearing=0.01,
                   box=(240, 80, 400, 400), confidence=.9, center=320)
     current = [person]

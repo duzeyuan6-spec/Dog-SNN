@@ -5,6 +5,7 @@ from pathlib import Path
 
 import numpy as np
 from ultralytics import YOLO
+from ultralytics.utils.nms import TorchNMS
 
 
 class PersonTracker:
@@ -13,6 +14,7 @@ class PersonTracker:
         if not Path(model_path).is_file():
             raise FileNotFoundError(model_path)
         self.model = YOLO(str(model_path))
+        self.model.add_callback("on_predict_postprocess_end", self._suppress_overlaps)
         self.tracker_path = str(Path(__file__).with_name("botsort.yaml"))
         self.target_id = None
         self.candidate_id = None
@@ -24,6 +26,13 @@ class PersonTracker:
         self.last_sequence = -1
         self.last_frame_at = None
         self.frame_timeout = config.get("robot", {}).get("observation_timeout", .45)
+
+    def _suppress_overlaps(self, predictor):
+        # YOLO26 skips NMS; remove duplicate person boxes before assigning IDs.
+        for result in predictor.results:
+            boxes = result.boxes
+            if boxes is not None:
+                result.update(boxes=boxes.data[TorchNMS.nms(boxes.xyxy, boxes.conf, .5)])
 
     def _empty(self, frame, reason):
         return dict(valid=False, reason=reason, track_id=self.target_id,
