@@ -35,13 +35,28 @@ Ctrl+C、SIGTERM 和限时结束都会先零速停车，再发送趴下命令并
 
 限制首次跟随开始后最多运行10秒（站立和选人等待不占这10秒）：`./run.sh --motion-seconds 10 --seconds 45`。
 
+## 按键录制 RGB-D
+
+在运行 `./run.sh` 的终端中，按 **`1`** 开始录制，按 **`a`** 停止并保存，均无需回车。录制期间再按 `1` 不会重复开启；看到 `Saved recording` 后可再按 `1` 录制下一段。按 `a` 只结束录制，跟随继续。Ctrl+C、SIGTERM、限时结束或异常退出也会收尾当前录制，停车和趴下流程照常执行。后台运行或没有交互终端时不启用按键；SSH 连接请使用 `ssh -t nav@192.168.1.50`。
+
+每段保存到 `output/recordings/日期时间_唯一后缀/`，不会覆盖已有片段，也不会上传到 Git：
+
+- `color.avi`：原始彩色画面，MJPG 编码，无检测框叠加。
+- `depth/000000.npy` 起：与彩色视频逐帧对应的深度，已对齐到彩色图，`float32`，单位米，保留无效值 `0`/`NaN`。
+- `timestamps.csv`：视频帧索引、相机帧序号、主机单调时钟时间、设备时间（均为秒），以及测距使用的 `fx/cx`。第 0 帧对应 `000000.npy`；单调时间不是日历时间。
+- `metadata.json`：完成/失败状态、分辨率、相机序列号、帧数与写盘丢帧数等。
+
+读取单帧深度：`depth_m = numpy.load("output/recordings/片段目录/depth/000000.npy", allow_pickle=False)`；像素 `(x, y)` 的距离为 `depth_m[y, x]` 米。
+
+录制复用跟随消费的 RGB-D 帧，不另开相机。后台写盘、最多缓存 8 对帧，写盘跟不上会整对丢弃彩色和深度并计数。AVI 使用配置帧率（默认 15 FPS），实际帧间隔以 CSV 为准；跟随消费最新帧，因此不保证保存相机每一帧。640×480、15 FPS 的未压缩深度约占 1.1 GB/分钟，另加视频空间；写盘失败会报错并触发程序正常停车收尾，无法挽回磁盘写入失败的数据。
+
 ## 已实现
 
 - 指定头部 Orbbec Gemini 336L（SN `CPC936300038`），640×480、15 FPS，彩色图与深度真实 D2C 对齐。按设备实时深度单位和内参计算距离与方位；只消费最新帧。
 - 复用已有 `yolo26n.pt` 和 Ultralytics BoT-SORT，CPU 推理、相机运动补偿，首次选中央高置信目标，之后固定 ID 加位置/深度连续性检查。
 - 独立进程 50 Hz 控制；视觉卡住不会持续维持旧速度。SDK最小非零速度以下发送零，停车绕过平滑。主进程退出后控制进程停车、趴下并退出。
 - 接入现有 Genisom SDK，自动检查网卡/端口/反馈，输出实际电量（约每秒读取）。dry-run 的电量为 null。
-- 输出 `output/latest.jpg`、`status.json`、限大小运行日志、`last_run.json`、最近500帧的 `last_trace.json`。相机与SDK只由本工程单一实例使用。
+- 输出 `output/latest.jpg`、`status.json`（含录制状态）、限大小运行日志、`last_run.json`、最近500帧的 `last_trace.json`，按键录制保存在 `output/recordings/`。相机与SDK只由本工程单一实例使用。
 
 ## 参数与现场校准
 
@@ -55,9 +70,12 @@ Ctrl+C、SIGTERM 和限时结束都会先零速停车，再发送趴下命令并
 
 ```bash
 .venv/bin/python check.py
+.venv/bin/python check_recording.py
 ```
 
 自检不会启动相机、导入真实狗 SDK 或发运动。依赖已部署；重建时运行 `bash setup.sh`，复用系统 PyTorch 与 pyorbbecsdk，不重复下载 CUDA。
+
+`check_recording.py` 用模拟帧验证视频解码、深度逐帧对应、按键状态切换、慢盘丢帧和写盘错误；Linux 上还验证无需回车、Ctrl+C 信号及终端设置恢复。录制已在狗电脑上通过模拟帧自检，尚未进行真相机录制测试。
 
 实现沿用本地 `初步人识别` 的 YOLO+BoT-SORT 接口；跟随流程参考 [Human-tracker-IR](https://github.com/Q-QIQI/Human-tracker-IR)，相机接入依据狗电脑现有 pyorbbecsdk 的 `sync_align.py`。本工程是 RGB-D/Genisom 适配实现，不复现原项目的红外专用模型。Ultralytics及模型沿用其上游许可。
 

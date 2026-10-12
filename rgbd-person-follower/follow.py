@@ -101,6 +101,7 @@ def main():
                 "DRY RUN (no robot SDK)" if args.dry_run else "LIVE ROBOT", config["vision"]["acquire_max_distance"],
                 "stops" if args.dry_run else "stops and lies down")
     from camera import OrbbecCamera
+    from recording import RGBDRecorder, TerminalKeys
     from robot import robot_worker
     from vision import PersonTracker
     import cv2
@@ -120,6 +121,8 @@ def main():
     for signum in (signal.SIGINT, signal.SIGTERM):
         signal.signal(signum, lambda *_: stop.set())
     camera = OrbbecCamera(config)
+    keys = TerminalKeys()
+    recorder = RGBDRecorder(output / "recordings", fps=config["camera"]["fps"], camera_serial=config["camera"]["serial"])
     robot_status = {"state": "starting", "vx": 0.0, "yaw": 0.0, "battery": None}
     frames = visible = 0
     latencies = []
@@ -129,6 +132,8 @@ def main():
     last_sequence = -1
     exit_code = 0
     try:
+        logger.info("Keys: 1 starts RGB-D recording, a stops and saves (no Enter)" if keys.open()
+                    else "Noninteractive input: recording hotkeys disabled; run in a terminal to record")
         camera.start()
         frame = camera.read(timeout=5)
         logger.info("Aligned %sx%s, fx=%.2f cx=%.2f", frame.color.shape[1], frame.color.shape[0], frame.fx, frame.cx)
@@ -158,6 +163,7 @@ def main():
                                           "captured_at": 0.0, "distance": 0.0, "bearing": 0.0})
                 continue
             last_sequence = frame.sequence
+            recorder.handle(keys.read(), frame)
             if not robot_status.get("ready") or robot_status.get("state") in ("stopping", "lying_down", "standing"):
                 observation = dict(valid=False, reason="waiting_for_stand", track_id=None,
                                    distance=0.0, bearing=0.0, box=None, confidence=0.0,
@@ -179,6 +185,8 @@ def main():
                 last_write = now
                 status = {"dry_run": args.dry_run, "observation": observation, "robot": robot_status,
                           "detections": tracker.detections,
+                          "recording": {"active": recorder.active, "path": str(recorder.path) if recorder.path else None,
+                                        "frames_written": recorder.frames_written, "dropped_pairs": recorder.dropped_pairs},
                           "fps": round(frames / max(.01, now - started), 2), "frame_age_ms": round(age * 1000, 1),
                           "time": time.strftime("%Y-%m-%d %H:%M:%S")}
                 save_json(output / "status.json", status)
@@ -206,6 +214,12 @@ def main():
         exit_code = 1
     finally:
         stop.set()
+        recorder.stop()
+        try:
+            keys.close()
+        except Exception:
+            logger.exception("Terminal cleanup failed")
+            exit_code = 1
         if worker.pid is not None:
             logger.info("Stopping control%s", "" if args.dry_run else "; waiting for dog to lie down")
             worker.join(timeout=1 if args.dry_run else config["robot"]["lie_down_delay"] + 6)
@@ -233,6 +247,11 @@ def main():
             camera.close()
         except Exception:
             logger.exception("Camera cleanup failed")
+            exit_code = 1
+        try:
+            recorder.close()
+        except Exception:
+            logger.exception("Recording save failed")
             exit_code = 1
         report = {"dry_run": args.dry_run, "frames": frames, "valid_target_frames": visible,
                   "seconds": round(time.monotonic() - started, 2), "exit_code": exit_code,
