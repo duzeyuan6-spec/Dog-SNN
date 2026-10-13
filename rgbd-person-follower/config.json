@@ -11,6 +11,8 @@
     "model": "yolo26n.pt",
     "imgsz": 416,
     "confidence": 0.35,
+    "reid_similarity": 0.7,
+    "reid_margin": 0.1,
     "threads": 4,
     "acquire_seconds": 0.6,
     "acquire_frames": 3,

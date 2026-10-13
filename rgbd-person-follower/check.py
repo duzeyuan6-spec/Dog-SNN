@@ -58,7 +58,7 @@ def check_control():
 def check_vision_and_camera():
     color = np.zeros((480, 640, 3), np.uint8)
     depth = np.full((480, 640), 2, np.float32)
-    with mock.patch.object(vision, "YOLO"):
+    with mock.patch.object(vision, "YOLO"), mock.patch.object(torch.jit, "load"):
         tracker = vision.PersonTracker(ROOT / "yolo26n.pt", CONFIG)
     tracker.model.add_callback.assert_called_once_with(
         "on_predict_postprocess_end", tracker._suppress_overlaps)
@@ -73,37 +73,109 @@ def check_vision_and_camera():
     assert sorted(result.boxes.data.tolist()) == sorted(boxes[[0, 2]].tolist())
     assert empty.boxes.data.shape == (0, 6) and none.boxes is None
     person = dict(track_id=7, distance=2.0, bearing=0.01,
-                  box=(240, 80, 400, 400), confidence=.9, center=320)
+                  box=(240, 80, 400, 400), confidence=.9, center=320,
+                  test_feature=(1.0, 0.0))
     current = [person]
-    tracker._observations = lambda _: current
+    tracker._observations = lambda _: [dict(o) for o in current]
+    tracker._features = lambda _, observations: [o["test_feature"] for o in observations]
     sequence, timestamp = 0, 100.0
 
-    def step(delta=.1):
-        nonlocal sequence, timestamp
-        sequence += 1
+    def step(people=None, delta=.31, repeated=False, invalid=False):
+        nonlocal sequence, timestamp, current
+        if people is not None:
+            current = people
+        sequence += int(not repeated)
         timestamp += delta
-        frame = RGBDFrame(color, depth, 600, 320, timestamp, sequence, timestamp)
+        frame = RGBDFrame(color, depth, 0 if invalid else 600, 320,
+                          timestamp, sequence, timestamp)
         return tracker.update(frame)
 
-    assert not step()["valid"]
-    assert not step(.31)["valid"]
-    assert step(.31)["valid"] and tracker.target_id == 7
-    current = [dict(person, track_id=8), person]
-    assert step()["track_id"] == 7
-    current = [dict(person, track_id=8)]
-    assert step()["reason"] == "target_missing" and tracker.target_id == 7
-    current = [dict(person, distance=None)]
+    def confirm(people):
+        assert not step(people)["valid"]
+        assert not step()["valid"]
+        output = step()
+        assert output["valid"] and output["track_id"] == people[0]["track_id"]
+        return output
+
+    confirm([person])
+    anchor, anchor_copy = tracker.anchor, tracker.anchor.copy()
+    assert tracker.target_id == 7 and tracker.gallery.maxlen == 8
+    borderline = dict(person, test_feature=(.67, (1 - .67 ** 2) ** .5))
+    assert step([borderline])["valid"] and not tracker.gallery
+    assert step([dict(borderline, track_id=8)])["reason"] == "target_unverified"
+    confirm([person])  # The lower keep threshold must never authorize a new ID.
+    assert step([dict(person, confidence=.2)], delta=.05)["valid"]
+    assert step([], delta=.05)["reason"] == "target_missing"
+    assert not step([person], delta=.05)["valid"]
+    assert not step(delta=.05)["valid"]
+    assert step(delta=.05)["valid"]  # A short same-ID gap needs three frames only.
+    # The original person can return far from the last location with a new raw ID.
+    returned = dict(person, track_id=81, distance=4.5,
+                    box=(480, 70, 620, 420), center=550)
+    assert step([])["reason"] == "target_missing"
+    assert not step([returned], delta=.1)["valid"]
+    assert not step(delta=.1)["valid"] and not step(delta=.1)["valid"]
+    assert not step(delta=.31)["valid"]  # Three frames alone cannot authorize a new ID.
+    assert step(delta=.11)["valid"] and tracker.target_id == 81
+    assert tracker.last_good["distance"] == 4.5
+    assert step([dict(returned, track_id=82, confidence=.2)])["reason"] == "target_unverified"
+    stranger = dict(returned, track_id=82, test_feature=(0.0, 1.0))
     saved = tracker.last_good
-    assert step()["reason"] == "depth_invalid" and tracker.last_good is saved
-    current = [person]
-    assert not step()["valid"] and not step()["valid"] and step()["valid"]
-    current = [dict(person, distance=4.5)]
-    saved = tracker.last_good
-    assert step()["reason"] == "target_jump" and tracker.last_good is saved
-    current = [person]
-    assert not step()["valid"] and not step()["valid"] and step()["valid"]
-    assert not step(.6)["valid"]  # A camera gap also requires three good frames.
+    assert step([stranger])["reason"] == "target_unverified"
+    assert step([dict(stranger, track_id=81)])["reason"] == "target_unverified"
+    assert tracker.target_id == 81 and tracker.last_good is saved
+    lookalike = dict(returned, track_id=82, test_feature=(.98, .2))
+    assert step([returned, lookalike])["reason"] == "target_ambiguous"
+    assert tracker.target_id == 81 and tracker.last_good is saved
+
+    # Any interruption breaks the consecutive-frame and elapsed-time evidence.
+    for reason, interrupt in (
+            ("target_missing", lambda: step([])),
+            ("depth_invalid", lambda: step([dict(returned, distance=None)])),
+            ("depth_invalid", lambda: step([dict(returned, distance=float("nan"))])),
+            ("invalid_frame", lambda: step(delta=0, invalid=True)),
+            ("repeated_frame", lambda: step(delta=0, repeated=True))):
+        assert not step([returned])["valid"]
+        assert not step()["valid"]
+        assert interrupt()["reason"] == reason
+        assert tracker.candidate is None and tracker.target_id == 81
+        confirm([returned])
+        step([])
+    assert not step([returned])["valid"] and not step()["valid"]
+    assert step(delta=.6)["reason"] == "confirming_target"
     assert not step()["valid"] and step()["valid"]
+    step([])
+    assert not step([dict(returned, track_id=90)])["valid"] and not step()["valid"]
+    assert tracker.target_id == 81
+    confirm([dict(returned, track_id=91)])
+
+    # Gallery updates must not drift the initial identity anchor.
+    view = dict(returned, track_id=91, test_feature=(.8, .6))
+    assert step([view])["valid"] and len(tracker.gallery) == 1
+    assert tracker.anchor is anchor and np.array_equal(tracker.anchor, anchor_copy)
+    for feature in ((float("nan"), 1.0), (0.0, 0.0)):
+        saved = tracker.last_good
+        assert step([dict(view, test_feature=feature)])["reason"] == "appearance_invalid"
+        assert tracker.target_id == 91 and tracker.last_good is saved
+    # A candidate jump resets confirmation, then a stable candidate can recover.
+    candidate = dict(person, track_id=92)
+    assert not step([candidate])["valid"] and not step()["valid"]
+    candidate = dict(returned, track_id=92)
+    assert step([candidate])["reason"] == "confirming_target"
+    assert tracker.target_id == 91
+    assert not step()["valid"] and step()["valid"] and tracker.target_id == 92
+    assert tracker.anchor is anchor and np.array_equal(tracker.anchor, anchor_copy)
+    # Expiry during ReID must not teach the gallery or advance target recovery.
+    saved, gallery = tracker.last_good, list(tracker.gallery)
+    for clock_values in ((2.0,), (0.0, 2.0)):
+        sequence += 1
+        timestamp += .1
+        frame = RGBDFrame(color, depth, 600, 320, timestamp, sequence, timestamp)
+        with mock.patch.object(vision, "monotonic", side_effect=clock_values):
+            assert tracker.update(frame, deadline=1.0)["reason"] == "inference_too_slow"
+        assert tracker.last_good is saved and tracker.candidate is None
+        assert tracker.anchor is anchor and len(tracker.gallery) == len(gallery)
+        assert all(np.array_equal(a, b) for a, b in zip(tracker.gallery, gallery))
     box = person["box"]
     assert tracker._depth(depth, box) == 2.0
     assert tracker._depth(np.zeros_like(depth), box) is None
@@ -183,6 +255,8 @@ def check_config():
         path = Path(directory) / "config.json"
         for section, key, value in (("vision", "confidence", 1), ("control", "max_vx", 3.01),
                                    ("control", "max_yaw", 3.01),
+                                   *(("vision", key, value) for key in ("reid_similarity", "reid_margin")
+                                     for value in (0, 1, -.1, True, False, "0.7", None, float("nan"))),
                                    ("robot", "rate_hz", float("nan")), ("robot", "auto_stand", "yes"),
                                    *(("robot", "record_battery", value) for value in ("false", 0, 1, None)),
                                    ("robot", "lie_down_delay", 2.9),

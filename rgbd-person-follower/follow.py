@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Orbbec RGB-D -> fixed person ID -> Genisom walking velocities."""
+"""Orbbec RGB-D -> appearance-verified person -> Genisom walking velocities."""
 import argparse
 from collections import deque
 import fcntl
@@ -45,6 +45,10 @@ def load_config(path):
         raise ValueError("Allow at least 3 seconds for the lieDown command, as in the SDK demo")
     if not 0 < v["confidence"] < 1 or not 128 <= v["imgsz"] <= 640:
         raise ValueError("Invalid detector confidence or image size")
+    for key, default in (("reid_similarity", .7), ("reid_margin", .1)):
+        value = v.setdefault(key, default)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 < value < 1:
+            raise ValueError(f"vision.{key} must be between 0 and 1")
     if not 0 < v["acquire_center_fraction"] <= .5 or not 0 < v["min_depth_fraction"] <= 1:
         raise ValueError("Invalid acquisition/depth fractions")
     if not config["camera"]["serial"].strip():
@@ -176,7 +180,7 @@ def main():
                                    distance=0.0, bearing=0.0, box=None, confidence=0.0,
                                    captured_at=frame.captured_at, sequence=frame.sequence)
             else:
-                observation = tracker.update(frame)
+                observation = tracker.update(frame, deadline=frame.captured_at + config["robot"]["observation_timeout"])
             age = time.monotonic() - frame.captured_at
             if age > config["robot"]["observation_timeout"]:
                 observation.update(valid=False, reason="inference_too_slow")
