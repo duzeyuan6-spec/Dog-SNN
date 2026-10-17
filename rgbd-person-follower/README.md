@@ -1,6 +1,6 @@
 # RGB-D 人跟随（Genisom L1）
 
-部署目录：`/home/nav/ljx/rgbd-person-follower`，电脑 `nav@192.168.1.50`。
+原电脑：`nav@192.168.1.50`，目录 `/home/nav/ljx/rgbd-person-follower`。新 Jetson：`wheeltec@192.168.1.87`，目录 `/home/wheeltec/ljx/rgbd-person-follower`。
 
 ## 从 GitHub 获取
 
@@ -10,9 +10,23 @@ cd Dog-SNN/rgbd-person-follower
 bash setup.sh
 ```
 
-本工程运行于 Ubuntu 22.04 x86_64、Python 3.10，复用狗电脑已有的 PyTorch、OpenCV、NumPy、`pyorbbecsdk` 和系统 pip；`setup.sh` 仅补装 `requirements.txt` 中的依赖。`yolo26n.pt` 和轻量人物重识别权重 `osnet_x0_25_msmt17.ts` 已随工程提供，运行时无需下载模型或安装新依赖。OSNet 来源、许可与导出方法见 `REID_MODEL.md`。
+本工程运行于 Ubuntu 22.04、Python 3.10，支持 x86_64 CPU 和 Jetson ARM64 CUDA，复用电脑已有的 PyTorch、OpenCV 和系统 pip。x86_64 的 `setup.sh` 补装 `requirements.txt`；ARM64 使用 `requirements-jetson.txt`，在项目虚拟环境内补齐 NumPy/科学计算依赖和固定版 Orbbec Python SDK，不替换系统的 CUDA/PyTorch/OpenCV。`yolo26n.pt` 和轻量人物重识别权重 `osnet_x0_25_msmt17.ts` 已随工程提供，运行时无需下载模型或安装新依赖。OSNet 来源、许可与导出方法见 `REID_MODEL.md`。
 
 Genisom 原生 SDK 复用狗电脑现有安装，未打包进本仓库；上游见 [genisom_l1_sdk_old](https://github.com/zsibot/genisom_l1_sdk_old)。首次在其它机器部署时，修改 `config.json` 的 `robot.sdk_path`、机器与狗的 IP、`camera.serial`，匹配实际设备。克隆后可直接在本工程目录运行 `./run.sh`，无需移动到原部署目录。
+
+## Jetson Orin NX 部署
+
+新机 `wheeltec@192.168.1.87`，工程目录 `/home/wheeltec/ljx/rgbd-person-follower`。使用 Ubuntu 22.04 / JetPack 6.2 / Python 3.10，SDK 原生库必须是 `lib/zsl-1/aarch64`；x86_64 的 `.venv` 和 `.so` 不能直接复制。
+
+新机 `config.json` 的 `vision.device` 设为 `"cuda:0"`，`robot.sdk_path` 设为 `/home/wheeltec/ljx/genisom_l1_sdk_old/lib/zsl-1/aarch64`。源码默认仍为 CPU，支持旧电脑。新机首次实测配置为跟随距离 1.5 m、最高前进速度 0.3 m/s、最高转向速度 0.5 rad/s。启动会先预热跟踪器和 OSNet、重置暖机跟踪状态，再打开相机和初始化控制进程；CUDA OSNet 关闭运行时形状优化，避免人数变化时出现秒级停顿。默认 Ultralytics 设置保存在工程的 `output/Ultralytics/`；若显式设置 `YOLO_CONFIG_DIR` 则尊重该路径。
+
+在新机终端执行一次 `sudo bash /home/wheeltec/ljx/rgbd-person-follower/setup_dog_network.sh`，新增 `dog-sdk` 网络配置，绑定 `enP8p1s0` 为 `192.168.168.66/24`，无默认路由、网关或 DNS，保留 Wi-Fi 和原有连接配置；脚本不激活接口、不修改狗端。之后可用 `bash setup_dog_network.sh --check` 核对持久设置。相同 `.66` 的控制电脑不能同时接入同一个有线网络；正常停车退出后再换狗网线。
+
+机器狗 SDK 连接仍使用 `192.168.168.66:43988 -> 192.168.168.168`。完整跟随还需将头部相机 USB 接到新机，优先使用 USB 3.x 端口；SSH 热键录制使用 `ssh -t wheeltec@192.168.1.87`。
+
+新机离线验收（2026-10-17）：ARM SDK 导入、Orbbec API、GPU NMS、控制/身份恢复/退出自检及模拟录制检查通过，未初始化真实机器狗 SDK。用原始 1069 帧彩色视频重新运行 CUDA YOLO+OSNet，并按 IoU 配对复用先前记录的躯干深度中位数（不含原始深度文件或实机测距）；约 31.90 秒重新认回目标，此后 113 帧保持跟随，处理延迟中位数 76.0 ms、P95 98.8 ms、最大 151.9 ms。回归检查同时确认暖机未改变首帧激活或初次锁定时机。
+
+写盘压测使用原录像 RGB 和固定 2 m 的合成深度，以 30 Hz 生产 300 对帧；GPU 视觉约 11.95 FPS 时，保存 300 帧视频及 300 个深度文件，实测 30.014 FPS，零源帧丢失、零队列丢帧。此测试只验证并发写盘吞吐，未连接真相机，不用于评价实测深度或身份识别。报告及可重跑脚本在新机 `output/deployment/`；真相机同步、深度对齐、30 FPS 和真实站立跟随须接线后另验收。
 
 ## 一键启动
 
@@ -63,7 +77,7 @@ Ctrl+C、SIGTERM 和限时结束都会先零速停车，再发送趴下命令并
 ## 已实现
 
 - 指定头部 Orbbec Gemini 336L（SN `CPC936300038`），640×480、30 FPS，彩色图与深度真实 D2C 对齐。按设备实时深度单位和内参计算距离与方位；跟随消费最新帧，录制消费每一对采集帧。
-- 复用已有 `yolo26n.pt` 和 Ultralytics BoT-SORT，CPU 推理、相机运动补偿，首次选中央高置信目标，之后用 OSNet x0.25（MSMT17）验证人物外观，同时检查位置/深度连续性。首次外观锚点固定，最多保存 8 个可信近期视角；只有正常稳定跟随、较高置信、与其它人框无重叠且外观分数充分时更新，不在重新寻找期间学习。相同跟踪 ID 也必须通过外观比对。YOLO26 默认跳过 NMS；在分配 ID 前额外对人框做 IoU 0.5 去重，减少重复框造成的 ID 分裂，保持现有检测头。
+- 复用已有 `yolo26n.pt` 和 Ultralytics BoT-SORT，支持 CPU/CUDA 推理、相机运动补偿，首次选中央高置信目标，之后用 OSNet x0.25（MSMT17）验证人物外观，同时检查位置/深度连续性。首次外观锚点固定，最多保存 8 个可信近期视角；只有正常稳定跟随、较高置信、与其它人框无重叠且外观分数充分时更新，不在重新寻找期间学习。相同跟踪 ID 也必须通过外观比对。YOLO26 默认跳过 NMS；在分配 ID 前额外对人框做 IoU 0.5 去重，减少重复框造成的 ID 分裂，保持现有检测头。
 - 独立进程 50 Hz 控制；视觉卡住不会持续维持旧速度。SDK最小非零速度以下发送零，停车绕过平滑。主进程退出后控制进程停车、趴下并退出。
 - 接入现有 Genisom SDK，自动检查网卡/端口/反馈，输出实际电量（约每秒读取）。dry-run 的电量为 null。
 - 输出 `output/latest.jpg`、`status.json`（含录制状态）、限大小运行日志、`last_run.json`、最近500帧的 `last_trace.json`，按键录制保存在 `output/recordings/`。相机与SDK只由本工程单一实例使用。
@@ -71,6 +85,8 @@ Ctrl+C、SIGTERM 和限时结束都会先零速停车，再发送趴下命令并
 ## 参数与现场校准
 
 修改 `config.json`。`camera.serial` 必须是头部前视相机；不要切到腕部相机。`control.target_distance` 改跟随距离，`max_vx` 改速度上限，`kp_distance/kp_yaw` 改响应。`robot.lie_down_delay` 是趴下命令保持时间，默认及最低 3 秒，与现有 SDK 示例一致；`stand_delay` 最低 10 秒。
+
+`vision.device` 控制 YOLO 和 OSNet 的统一推理设备，未设置时为 `"cpu"`；Jetson 设置为 `"cuda:0"`（`"cuda"` 等同于 `"cuda:0"`，多 GPU 可指定 `"cuda:1"` 等编号）。需要已经安装与设备匹配的 CUDA 版 PyTorch；指定的 CUDA 不可用时启动会明确报错，不自动退回 CPU。原 CPU 电脑无需修改配置。
 
 `vision.reid_similarity` 默认 `0.7`，是重新认回目标的最低余弦相似度；已确认的同 ID 且位置/深度连续时，持续跟踪门限低 `0.05`（默认 `0.65`），避免在门限附近反复停走，换 ID 或失锁恢复仍使用完整门限。`vision.reid_margin` 默认 `0.1`，是最佳和次佳候选的最小分差。低于阈值显示 `target_unverified`，分差不足显示 `target_ambiguous`，确认中显示 `confirming_target`。这些分数不是识别正确率；不要为消除停车盲目降低阈值。当前初始外观锚点还要求至少 `0.5` 相似度，限制近期视角库漂移。旧配置缺少新参数时使用上述默认值，启动时必须能加载本地 ReID 权重。
 

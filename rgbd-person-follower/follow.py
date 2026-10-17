@@ -11,6 +11,7 @@ import multiprocessing as mp
 import os
 from pathlib import Path
 import queue
+import re
 import time
 
 os.environ.setdefault("YOLO_AUTOINSTALL", "false")
@@ -29,6 +30,11 @@ def load_config(path):
                 if not math.isfinite(value) or value <= 0:
                     raise ValueError(f"{section}.{key} must be finite and positive")
     c, r, v = config["control"], config["robot"], config["vision"]
+    device = v.setdefault("device", "cpu")
+    if not isinstance(device, str) or not re.fullmatch(r"cpu|cuda(?::(?:0|[1-9][0-9]*))?", device):
+        raise ValueError("vision.device must be cpu, cuda, or cuda:N (a nonnegative device index)")
+    if device == "cuda":
+        v["device"] = "cuda:0"
     if not isinstance(r.setdefault("record_battery", True), bool):
         raise ValueError("robot.record_battery must be true or false")
     if not 0 < c["min_distance"] < c["target_distance"] < c["max_distance"] <= 6:
@@ -116,8 +122,15 @@ def main():
     torch.set_num_threads(int(config["vision"]["threads"]))
     cv2.setNumThreads(1)
     tracker = PersonTracker(ROOT / config["vision"]["model"], config)
-    tracker.model.predict(np.zeros((480, 640, 3), dtype=np.uint8), device="cpu",
-                          imgsz=config["vision"]["imgsz"], verbose=False)
+    # Prime lazy tracker imports and ReID before opening the camera or dog SDK.
+    tracker.model.track(np.zeros((480, 640, 3), dtype=np.uint8), device=tracker.device,
+                        imgsz=config["vision"]["imgsz"], classes=[0], conf=.1,
+                        persist=True, tracker=tracker.tracker_path, verbose=False)
+    # Warmup must not consume the first real frame's immediate track activation.
+    for backend_tracker in tracker.model.predictor.trackers:
+        backend_tracker.reset()
+    with torch.inference_mode(), torch.jit.optimized_execution(tracker.device.type != "cuda"):
+        tracker.reid(torch.zeros((1, 3, 256, 128), device=tracker.device)).cpu()
     ctx = mp.get_context("spawn")
     config["_parent_pid"] = os.getpid()
     config["_motion_seconds"] = args.motion_seconds

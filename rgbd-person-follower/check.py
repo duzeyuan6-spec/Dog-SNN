@@ -15,13 +15,13 @@ from unittest import mock
 
 import numpy as np
 import torch
+import vision
 from ultralytics.engine.results import Results
 
 from camera import OrbbecCamera, RGBDFrame
 from control import FollowController
 from follow import load_config
 import robot
-import vision
 
 ROOT = Path(__file__).resolve().parent
 CONFIG = load_config(ROOT / "config.json")
@@ -255,6 +255,8 @@ def check_config():
         path = Path(directory) / "config.json"
         for section, key, value in (("vision", "confidence", 1), ("control", "max_vx", 3.01),
                                    ("control", "max_yaw", 3.01),
+                                   *(("vision", "device", value) for value in
+                                     (None, True, 0, "", "auto", "mps", "cpu:0", "cuda:-1", "cuda:01", "cuda:0,1", " cuda:0")),
                                    *(("vision", key, value) for key in ("reid_similarity", "reid_margin")
                                      for value in (0, 1, -.1, True, False, "0.7", None, float("nan"))),
                                    ("robot", "rate_hz", float("nan")), ("robot", "auto_stand", "yes"),
@@ -276,6 +278,44 @@ def check_config():
                 cfg["robot"]["record_battery"] = enabled
             path.write_text(json.dumps(cfg))
             assert load_config(path)["robot"].get("record_battery", True) is (True if enabled is None else enabled)
+        for value, expected in ((None, "cpu"), ("cpu", "cpu"), ("cuda", "cuda:0"), ("cuda:0", "cuda:0"), ("cuda:1", "cuda:1")):
+            cfg = copy.deepcopy(CONFIG)
+            cfg["vision"].pop("device", None)
+            if value is not None:
+                cfg["vision"]["device"] = value
+            path.write_text(json.dumps(cfg))
+            assert load_config(path)["vision"]["device"] == expected
+
+
+def check_vision_device():
+    cfg = copy.deepcopy(CONFIG)
+    cfg["vision"]["device"] = "cuda:0"
+    with mock.patch.object(torch.cuda, "is_available", return_value=False), mock.patch.object(vision, "YOLO") as model:
+        assert "CUDA device is unavailable" in str(raises(RuntimeError, lambda: vision.PersonTracker(ROOT / "yolo26n.pt", cfg)))
+        model.assert_not_called()
+    with mock.patch.object(torch.cuda, "is_available", return_value=True), mock.patch.object(torch.cuda, "device_count", return_value=1), \
+            mock.patch.object(vision, "YOLO"), mock.patch.object(torch.jit, "load") as load:
+        tracker = vision.PersonTracker(ROOT / "yolo26n.pt", cfg)
+        assert load.call_args.kwargs["map_location"] == torch.device("cuda:0")
+        cfg["vision"]["device"] = "cuda:1"
+        raises(RuntimeError, lambda: vision.PersonTracker(ROOT / "yolo26n.pt", cfg))
+    frame = RGBDFrame(np.zeros((480, 640, 3), np.uint8), np.ones((480, 640), np.float32), 600, 320, 1, 1, 1)
+    tracker.model.track.return_value = [SimpleNamespace(boxes=None)]
+    assert tracker._observations(frame) == []
+    assert tracker.model.track.call_args.kwargs["device"] == torch.device("cuda:0")
+    # No GPU allocation: verify the transfer request, then run preprocessing on CPU.
+    pixels = torch.zeros((1, 3, 256, 128))
+    tracker.reid.return_value.cpu.return_value.numpy.return_value = np.array([[1., 0.]])
+    with mock.patch.object(torch, "from_numpy") as tensor, mock.patch.object(torch.jit, "optimized_execution") as optimized:
+        tensor.return_value.to.return_value = pixels
+        assert np.array_equal(tracker._features(frame, [{"box": (0, 0, 128, 256)}]), [[1., 0.]])
+        tensor.return_value.to.assert_called_once_with(device=torch.device("cuda:0"), dtype=torch.float32)
+        optimized.assert_called_once_with(False)
+    tracker.reid.return_value.cpu.assert_called_once_with()
+    tracker.device = torch.device("cpu")
+    with mock.patch.object(torch.jit, "optimized_execution") as optimized:
+        tracker._features(frame, [{"box": (0, 0, 128, 256)}])
+        optimized.assert_called_once_with(True)
 
 
 def check_motion_window():
@@ -547,4 +587,5 @@ if __name__ == "__main__":
     check_shutdown_signals()
     check_motion_window()
     check_config()
+    check_vision_device()
     print("PASS: controller, target lock, depth, freshness, watchdog, posture order, shutdown hold/signals/reentrancy, battery, config")

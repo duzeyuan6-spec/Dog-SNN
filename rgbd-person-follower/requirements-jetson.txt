@@ -1,0 +1,8 @@
+-r requirements.txt
+numpy==1.26.4
+scipy==1.13.1
+matplotlib==3.8.4
+contourpy==1.2.1
+filelock==3.16.1
+nvidia-ml-py==12.575.51
+pyorbbecsdk @ https://github.com/orbbec/pyorbbecsdk/releases/download/v2.0.13/pyorbbecsdk-2.0.13-cp310-cp310-linux_aarch64.whl#sha256=ec06277d396ff8dceb61c2388b102a7cae2f240ddb127acdbecb8eeaef429d79

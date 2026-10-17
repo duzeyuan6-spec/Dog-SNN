@@ -1,13 +1,18 @@
-"""CPU person tracking with appearance-verified target recovery."""
+"""Person tracking with appearance-verified target recovery."""
 
 from collections import deque
 from math import atan2, hypot, isfinite
+import os
 from pathlib import Path
 from time import monotonic
 
 import cv2
 import numpy as np
 import torch
+
+_settings_root = Path(__file__).resolve().parent / "output"
+_settings_root.mkdir(parents=True, exist_ok=True)
+os.environ.setdefault("YOLO_CONFIG_DIR", str(_settings_root))
 from ultralytics import YOLO
 from ultralytics.utils.nms import TorchNMS
 
@@ -15,13 +20,17 @@ from ultralytics.utils.nms import TorchNMS
 class PersonTracker:
     def __init__(self, model_path, config):
         self.cfg = config.get("vision", {})
+        self.device = torch.device(self.cfg.get("device", "cpu"))
+        if self.device.type == "cuda" and (not torch.cuda.is_available()
+                or (self.device.index or 0) >= torch.cuda.device_count()):
+            raise RuntimeError(f"Requested vision.device={self.device}, but that CUDA device is unavailable")
         if not Path(model_path).is_file():
             raise FileNotFoundError(model_path)
         self.model = YOLO(str(model_path))
         self.model.add_callback("on_predict_postprocess_end", self._suppress_overlaps)
         self.tracker_path = str(Path(__file__).with_name("botsort.yaml"))
         self.reid = torch.jit.load(str(Path(__file__).with_name("osnet_x0_25_msmt17.ts")),
-                                   map_location="cpu").eval()
+                                   map_location=self.device).eval()
         self.anchor = None
         self.gallery = deque(maxlen=8)
         self.gallery_at = 0.0
@@ -67,7 +76,7 @@ class PersonTracker:
         result = self.model.track(
             frame.color, persist=True, classes=[0],
             conf=min(.1, self.cfg.get("confidence", .35)),
-            imgsz=self.cfg.get("imgsz", 416), device="cpu",
+            imgsz=self.cfg.get("imgsz", 416), device=self.device,
             tracker=self.tracker_path, verbose=False,
         )[0]
         boxes = result.boxes
@@ -99,11 +108,13 @@ class PersonTracker:
             x1, y1, x2, y2 = observation["box"]
             crops.append(cv2.resize(frame.color[y1:y2, x1:x2], (128, 256))[:, :, ::-1])
         pixels = np.ascontiguousarray(np.stack(crops).transpose(0, 3, 1, 2))
-        batch = torch.from_numpy(pixels).float() / 255
+        batch = torch.from_numpy(pixels).to(device=self.device, dtype=torch.float32) / 255
         mean = batch.new_tensor([.485, .456, .406])[None, :, None, None]
         std = batch.new_tensor([.229, .224, .225])[None, :, None, None]
-        with torch.inference_mode():
-            return self.reid((batch - mean) / std).numpy()
+        # ponytail: CUDA shape profiling stalls for >1s on new person counts.
+        # Use the frozen graph directly; a compiled engine is the speed upgrade path.
+        with torch.inference_mode(), torch.jit.optimized_execution(self.device.type != "cuda"):
+            return self.reid((batch - mean) / std).cpu().numpy()
 
     def _continuous(self, observation, frame, previous):
         if previous is None:

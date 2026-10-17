@@ -9,6 +9,7 @@
   },
   "vision": {
     "model": "yolo26n.pt",
+    "device": "cpu",
     "imgsz": 416,
     "confidence": 0.35,
     "reid_similarity": 0.7,
