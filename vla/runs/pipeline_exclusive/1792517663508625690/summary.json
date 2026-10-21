@@ -1,0 +1,40 @@
+{
+  "gpu": 0,
+  "exclusive_compute": true,
+  "display_service_excluded_from_process_guard": true,
+  "scope": "fixed observation replay, 8 preprocessing + 1 VLA chunk + action postprocessing; simulator and loading excluded",
+  "rows": {
+    "raw": {
+      "mean_ms": 204.22460729411492,
+      "mean_block_p95_ms": 219.75836405957423,
+      "joules_per_8step_cycle": 47.88444444444445
+    },
+    "vae": {
+      "mean_ms": 431.8663034122437,
+      "mean_block_p95_ms": 442.7516991718827,
+      "joules_per_8step_cycle": 133.35764444444445
+    },
+    "42": {
+      "mean_ms": 417.5399821445656,
+      "mean_block_p95_ms": 437.28885429445654,
+      "joules_per_8step_cycle": 118.6248111111111,
+      "time_reduction_vs_vae_pct": 3.3173047201144445,
+      "energy_reduction_vs_vae_pct": 11.047610652324401
+    },
+    "43": {
+      "mean_ms": 416.76750076650126,
+      "mean_block_p95_ms": 436.3575803038354,
+      "joules_per_8step_cycle": 118.77077777777778,
+      "time_reduction_vs_vae_pct": 3.496175211273589,
+      "energy_reduction_vs_vae_pct": 10.938155609627175
+    },
+    "44": {
+      "mean_ms": 413.19780471191433,
+      "mean_block_p95_ms": 426.14957977396745,
+      "joules_per_8step_cycle": 118.56306666666667,
+      "time_reduction_vs_vae_pct": 4.322749553004401,
+      "energy_reduction_vs_vae_pct": 11.093910543644203
+    }
+  },
+  "both_10pct_reduction_all_seeds": false
+}

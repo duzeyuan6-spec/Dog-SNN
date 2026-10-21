@@ -1,0 +1,26 @@
+{
+  "created": 1792478550.8526976,
+  "suite": "libero_spatial",
+  "conditions": [
+    "raw",
+    "vae",
+    "42",
+    "43",
+    "44"
+  ],
+  "tasks": 10,
+  "trials_per_task": 50,
+  "total_rollouts": 2500,
+  "seed": 42,
+  "initial_states": "official task initial states [0:50], same for all conditions",
+  "camera": "front only; wrist and proprio unchanged",
+  "confidence_intervals": false,
+  "timing": "synchronized prepare_observation including reconstruction/IPC/preprocessing, and get_action; summed across episode calls; shared diagnostic timing only",
+  "energy": "not collected during shared success evaluation; exclusive performance phase pending",
+  "source_sha256": {
+    "vla/run_full_eval.py": "104cf661d02e7f32ea763fd8c5b82f3c759a14ca6d19cb84caeff7dbe764948d",
+    "vla/reconstruction_worker.py": "ef89d54c0550a4dd793ba419b13a1bd35fd4ba9c3b33de64add5134e16060602",
+    "src/vla_full.py": "0729fb828a0a70b569a61ed4db523eb3aa48544ba386cddc19131a06c85e48aa",
+    "src/vla_full_queue.py": "377bcb82ac2b41b080d113eee267d05f0683c73e376c9fa5ed8779f6dc1a1ef2"
+  }
+}

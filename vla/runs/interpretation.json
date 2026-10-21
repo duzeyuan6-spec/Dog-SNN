@@ -1,0 +1,9 @@
+{
+  "updated": "2026-10-21",
+  "criterion": "Any measured improvement; no 10 percent threshold",
+  "comparison": "SNN vs official unfinetuned VAE reconstruction",
+  "outcome": "improvement observed in success rate, latency and board energy for all three SNN seeds",
+  "historical_10pct_fields": "preserved as historical numerical comparisons, not current success criterion",
+  "statistical_significance_claimed": false,
+  "raw_input_cost": "lower than both VAE and SNN reconstruction"
+}

@@ -1,0 +1,1 @@
+transformers @ file:///datasets2/dzy/snn_vae_20261015/vla/vendor/transformers-openvla-oft

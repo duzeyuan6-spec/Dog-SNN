@@ -1,0 +1,21 @@
+{
+  "scope": "fixed-observation replay, 8 observation preprocessing calls + 1 action-chunk inference + action postprocessing; excludes simulator/model startup",
+  "shared_gpu": false,
+  "acceptance_eligible": true,
+  "energy_scope": "whole GPU board; shared runs include other processes",
+  "rounds": 3,
+  "tasks": 10,
+  "cycles_per_task": 3,
+  "warmup_cycles_per_condition": 3,
+  "order": "cyclic rotation per round",
+  "conditions": [
+    "raw",
+    "vae",
+    "42",
+    "43",
+    "44"
+  ],
+  "observation_sha256": "be6780ec0fbee15263b6f0df9bc2dcf435b332ec1e615d9e9c094775e7918aa1",
+  "script_sha256": "b543c02c9dad40e094f17c748ee7829746bff8837fab04c4b33654ef4cd7b013",
+  "confidence_intervals": false
+}

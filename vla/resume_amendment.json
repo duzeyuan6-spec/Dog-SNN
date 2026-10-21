@@ -1,0 +1,8 @@
+{
+  "time": 1792488198.5135498,
+  "reason": "cooperative resource yielding restarted partial VAE condition; retain finished episode records across future starts",
+  "new_wrapper_sha256": "a8e0a14d8d5accb14f8f1f7d72e00b9c9a4be3dfe2d08c792fa064fcde15f92f",
+  "changes": "cache task+initial-state hash and success, skip repeat rollout/video; no model/data/initial-state/action changes",
+  "applies": "next process startup, currently running processes unchanged",
+  "previous_attempts": "retained; existing pre-cache attempts are not automatically merged"
+}

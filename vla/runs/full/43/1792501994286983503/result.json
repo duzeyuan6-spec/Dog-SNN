@@ -1,0 +1,8 @@
+{
+  "success_rate": 0.982,
+  "kind": "43",
+  "trials_per_task": 50,
+  "tasks": 10,
+  "confidence_interval_requested": false,
+  "energy_measured": false
+}

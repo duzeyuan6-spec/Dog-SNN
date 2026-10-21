@@ -1,0 +1,10 @@
+{
+  "time": 1792477122.3694792,
+  "fixes": [
+    "LIBERO repository root added to wrapper sys.path",
+    "tensorflow-metadata==1.15.0 and wandb==0.16.6 pinned",
+    "numeric CUDA_VISIBLE_DEVICES with PCI_BUS_ID for robosuite EGL",
+    "mujoco==2.3.7 replaces incompatible 3.16.0"
+  ],
+  "rollout_verified": false
+}

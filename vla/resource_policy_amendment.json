@@ -1,0 +1,21 @@
+{
+  "time": 1792501938.707104,
+  "reason": "User authorizes any available GPU for remaining seeds42/43",
+  "gpu_indices": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7
+  ],
+  "shared": true,
+  "startup_free_mb": 28000,
+  "startup_util_max": 50,
+  "yield_free_mb": 8000,
+  "new_foreign_pid_alone_causes_exit": false,
+  "per_gpu_lock": true,
+  "backup": "/datasets2/dzy/snn_vae_20261015/revisions/vla_queue_all_gpu_1792501938"
+}

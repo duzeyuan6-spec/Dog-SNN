@@ -1,0 +1,1 @@
+{"physical_gpu": 2, "shared_gpu": true, "note": "directory legacy gpu3 label; actual CUDA_VISIBLE_DEVICES=2, status and logs identify GPU2", "time": 1792511063.2754948}
