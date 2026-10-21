@@ -1,0 +1,21 @@
+{
+  "root": "/datasets2/dzy/snn_vae_20261015",
+  "model_id": "black-forest-labs/FLUX.2-klein-4B",
+  "model_revision": "e7b7dc27f91deacad38e78976d1f2b499d76a294",
+  "dataset_id": "lerobot/libero",
+  "dataset_revision": "a1aaacb7f6cd6ee5fb43120f673cebb0cfea7dd4",
+  "camera": "observation.images.image",
+  "seed": 42,
+  "stride": 8,
+  "resolution": 256,
+  "width": 48,
+  "timesteps": 4,
+  "batch_size": 4,
+  "pilot_steps": 5000,
+  "learning_rate": 0.0002,
+  "validation_frames": 400,
+  "quality_gate": {"psnr_drop_db": 0.5, "lpips_increase": 0.02},
+  "resource_policy": {"idle_samples": 3, "poll_seconds": 10, "max_memory_mb": 256, "max_utilization_percent": 5},
+  "shared_training_policy": {"gpu_indices": [3], "min_free_memory_mb": 28000, "max_utilization_percent": 50, "memory_fraction": 0.35, "yield_below_free_mb": 8000, "pause_to_work_ratio": 1.0},
+  "stage": "pilot_validation_only"
+}

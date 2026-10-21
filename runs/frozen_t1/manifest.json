@@ -1,0 +1,36 @@
+{
+  "frozen_at": 1792422331.9789195,
+  "checkpoints": {
+    "42": "runs/joint_t1_v6/best.pt",
+    "43": "runs/seed43/joint_t1_v6/best.pt",
+    "44": "runs/seed44/joint_t1_v6/best.pt"
+  },
+  "files": {
+    "runs/joint_t1_v6/best.pt": "94e73de7aac13e54a499ac4fa46265aead8047a340dfb023b8d508eee1836e5c",
+    "runs/seed43/joint_t1_v6/best.pt": "773073f77a2c03ec592c6c8096382e1733ea9facb2e19d038b470e5ef64efcd9",
+    "runs/seed44/joint_t1_v6/best.pt": "bcc4b22dd5c433594705d5991f3571cd4b363036a170ff1ecc1edc6bce6cf9cc",
+    "src/config.json": "6546dba75ce9b1c294ebf305db0db3a26970ba1adc7dec472b7468508d2f3ea6",
+    "src/common.py": "7ef6e29d10e69d40c09bc5e795f7f4722a6dd8c6be953bf60e70e123e4f379f6",
+    "src/model.py": "1e6db1d6a9d436089bacd377cd06d82092a7c92e7afa1c11efbc26a7d3f78497",
+    "src/spike_encoder.py": "e756384f8aea6e54bfdffd36edc2854933f1989cda03604a047c2dcd1bd6bd84",
+    "src/spike_encoder_fast.py": "aed39e6e24c0b69abea0fbc44f9452de8130215099b70b293f33b806ecbbcde1",
+    "src/run.py": "832d10e67dfeab2681b5ae58e12fc6b4aed972bf9b6ad510600f7c971d2c1347",
+    "src/frozen_test.py": "812bbcc665f590b03c9cd85ffd55dbd6ea8893e029ce8be6555d846703b9fad8",
+    "data/frames.jsonl": "dfeae345b838e1fa04aa255c0b190f1b946d27630cf48a7b0404c3790fc12250",
+    "models/flux2/vae/config.json": "0d6dfb69ae95a5e2ac9836284bbb63d8b38ce67b25ba2dff380752b2a10ab948",
+    "models/flux2/vae/diffusion_pytorch_model.safetensors": "ca70d2202afe6415bdbcb8793ba8cd99fd159cfe6192381504d6c4d3036e0f04"
+  },
+  "seeds": [
+    42,
+    43,
+    44
+  ],
+  "quality_gate": {
+    "psnr_drop_db": 0.5,
+    "lpips_increase": 0.02
+  },
+  "latency_reduction_min": 0.1,
+  "energy_reduction_min": 0.1,
+  "scope": "Held-out deterministic reconstruction, no test-driven selection. All three seeds reported.",
+  "stage1_complete": false
+}
